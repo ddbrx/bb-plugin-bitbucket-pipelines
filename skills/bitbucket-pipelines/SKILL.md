@@ -6,7 +6,11 @@ Use native bitbucket_pipelines_run/list/status/stop tools or `bb bitbucket-pipel
 Launch pipelines only within the user's requested work; custom pipelines can deploy code.
 Read workspace and repository defaults from plugin settings by omitting them, or pass explicit slugs.
 
+Discovery requires workspace/repository read scopes. Use `bitbucket_pipelines_workspaces` and `bitbucket_pipelines_repositories` to discover choices; each page contains up to fifty entries. With scoped access tokens, pass a known workspace directly if workspace discovery is unavailable.
+
 Commands:
+- `bb bitbucket-pipelines workspaces [--page 1] --json`
+- `bb bitbucket-pipelines repositories --workspace team [--page 1] --json`
 - `bb bitbucket-pipelines list [--workspace team --repo app] [--page 1] --json`
 - `bb bitbucket-pipelines run --ref main [--custom deploy-staging] [--ref-type branch|tag] [--commit HASH] --json`
 - `bb bitbucket-pipelines get BUILD_NUMBER_OR_UUID --json`

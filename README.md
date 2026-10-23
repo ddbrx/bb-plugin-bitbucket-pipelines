@@ -36,16 +36,20 @@ See [Atlassian authentication](https://developer.atlassian.com/cloud/bitbucket/r
 
 ## Dashboard
 
-Open **Bitbucket Pipelines** in the sidebar. Load a workspace/repository, then launch a branch or tag pipeline, optionally choosing a custom pipeline name and commit. The custom name must exist under `pipelines.custom` in that reference's `bitbucket-pipelines.yml`.
+Open **Bitbucket Pipelines** in the sidebar. Accessible workspaces load automatically; choose one to list its repositories, then select a repository to load recent runs and its default branch. Use “More workspaces” or “More repositories” for additional pages. Discovery requires `read:workspace:bitbucket` and `read:repository:bitbucket` API token scopes (or equivalent access-token permissions). Workspace discovery uses the current `/user/workspaces` endpoint. For scoped tokens that cannot discover workspaces, use “Enter workspace manually” to discover repositories within that workspace. Full manual workspace/repository entry remains available without discovery permissions.
+
+Load a workspace/repository, then launch a branch or tag pipeline, optionally choosing a custom pipeline name and commit. The custom name must exist under `pipelines.custom` in that reference's `bitbucket-pipelines.yml`.
 Add runtime variables and choose whether Bitbucket should secure each value (on by default). Submitted variables are cleared after a successful launch and are never persisted by this plugin.
 
 Recent runs show status, result, branch, commit, author, timestamp, and reported duration. Select a run for its first 100 steps, open its full Bitbucket view, or stop an active run. Twenty runs per page, refreshed every 15 seconds while the page is visible. Status comes directly from Bitbucket; network failures preserve the last displayed list and show an error.
 
 ## Agents and CLI
 
-Native tools: `bitbucket_pipelines_run`, `bitbucket_pipelines_list`, `bitbucket_pipelines_status`, `bitbucket_pipelines_stop`. New agent sessions receive the plugin's usage skill. All surfaces use the same validated service functions.
+Native tools: `bitbucket_pipelines_workspaces`, `bitbucket_pipelines_repositories`, `bitbucket_pipelines_run`, `bitbucket_pipelines_list`, `bitbucket_pipelines_status`, `bitbucket_pipelines_stop`. New agent sessions receive the plugin's usage skill. All surfaces use the same validated service functions.
 
 ```sh
+bb bitbucket-pipelines workspaces --json
+bb bitbucket-pipelines repositories --workspace TEAM --json
 bb bitbucket-pipelines list --json
 bb bitbucket-pipelines run --ref main --custom deploy-staging --json
 bb bitbucket-pipelines run --ref v1.0 --ref-type tag --json

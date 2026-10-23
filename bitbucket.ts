@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { pipelineSchema, stepSchema, runInput, type Pipeline } from './contract';
+import { pipelineSchema, stepSchema, runInput, type Pipeline, workspaceSchema, repositorySchema } from './contract';
 export type Credentials = { authMode: string; email: string; token?: string };
 export function authorization(c: Credentials): string {
   if (!c.token?.trim()) throw new Error('Add a token in Settings → Installed plugins → Bitbucket Pipelines.');
@@ -33,11 +33,22 @@ export function normalizeStep(raw: unknown) {
   const s = z.object({ uuid: z.string(), name: z.string().optional(), state, duration_in_seconds: z.number().nullish() }).parse(raw);
   return stepSchema.parse({ uuid: s.uuid, name: s.name ?? 'Step', state: s.state.name, result: s.state.result?.name ?? null, duration: s.duration_in_seconds ?? 0 });
 }
-export async function request(credentials: Credentials, path: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<unknown> {
+export function normalizeWorkspace(raw: unknown) {
+  const w = z.object({ workspace: z.object({ slug: z.string(), name: z.string().optional() }) }).parse(raw).workspace;
+  return workspaceSchema.parse({ slug: w.slug, name: w.name ?? w.slug });
+}
+export function normalizeRepository(raw: unknown, workspace: string) {
+  const r = z.object({ slug: z.string(), name: z.string(), mainbranch: z.object({ name: z.string() }).nullish() }).parse(raw);
+  return repositorySchema.parse({ workspace, slug: r.slug, name: r.name, branch: r.mainbranch?.name ?? '' });
+}
+export function request(credentials: Credentials, path: string, method = 'GET', body?: unknown, signal?: AbortSignal) {
+  return requestApi(credentials, `repositories/${path}`, method, body, signal);
+}
+export async function requestApi(credentials: Credentials, path: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<unknown> {
   const headers = { Authorization: authorization(credentials), Accept: 'application/json', 'Content-Type': 'application/json' };
   let response: Response;
   try {
-    response = await fetch(`https://api.bitbucket.org/2.0/repositories/${path}`, { method, headers, redirect: 'error',
+    response = await fetch(`https://api.bitbucket.org/2.0/${path}`, { method, headers, redirect: 'error',
       signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(20000)]) : AbortSignal.timeout(20000),
       ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   } catch {

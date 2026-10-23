@@ -1,6 +1,6 @@
 # Bitbucket Pipelines
 
-A BB plugin for Bitbucket Cloud pipeline launches, status, step inspection and cancellation.
+A BB plugin for Bitbucket Cloud pipeline launches, status, step inspection and cancellation. The dashboard discovers accessible workspaces and repositories automatically, with manual entry for scoped tokens.
 
 - `server.ts`: settings, RPC, agent tools, and CLI registration.
 - `contract.ts`: shared input/output validation.

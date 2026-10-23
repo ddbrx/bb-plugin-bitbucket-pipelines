@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { definePluginApp, useBbNavigate, useRealtime, useRpc } from '@get-bb/plugin-sdk/app';
-import type { rpcContract, Pipeline } from './contract';
+import type { rpcContract, Pipeline, Repository } from './contract';
 import { Button } from './components/ui/button';
 import { Input } from './components/ui/input';
 import { Icon } from './components/ui/icon';
@@ -16,6 +16,14 @@ function Dashboard() {
   const navigate = useBbNavigate();
   const [config, setConfig] = useState<{ configured: boolean; workspace: string; repo: string } | null>(null);
   const [workspace, setWorkspace] = useState(''); const [repo, setRepo] = useState('');
+  const [workspaces, setWorkspaces] = useState<{ slug: string; name: string }[]>([]);
+  const [repositories, setRepositories] = useState<Repository[]>([]);
+  const [workspacePage, setWorkspacePage] = useState(1); const [repoPage, setRepoPage] = useState(1);
+  const [moreWorkspaces, setMoreWorkspaces] = useState(false); const [moreRepos, setMoreRepos] = useState(false);
+  const [workspaceError, setWorkspaceError] = useState(''); const [repoError, setRepoError] = useState('');
+  const [discoveringWorkspaces, setDiscoveringWorkspaces] = useState(false); const [discoveringRepos, setDiscoveringRepos] = useState(false);
+  const [discoveryRetry, setDiscoveryRetry] = useState(0);
+  const [discoveryWorkspace, setDiscoveryWorkspace] = useState('');
   const [active, setActive] = useState<{ workspace: string; repo: string } | null>(null);
   const [runs, setRuns] = useState<Pipeline[] | null>(null); const [page, setPage] = useState(1); const [hasNext, setHasNext] = useState(false);
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false); const [loading, setLoading] = useState(false); const [updated, setUpdated] = useState('');
@@ -25,6 +33,33 @@ function Dashboard() {
   const generation = useRef(0);
   const report = (cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause));
   useEffect(() => { let live = true; rpc.call('config').then(c => { if (!live) return; setConfig(c); setWorkspace(c.workspace); setRepo(c.repo); if (c.configured && c.workspace && c.repo) setActive({ workspace: c.workspace, repo: c.repo }); }, e => { if (live) report(e); }); return () => { live = false; }; }, [rpc]);
+  useEffect(() => {
+    if (!config?.configured) return;
+    let live = true; setDiscoveringWorkspaces(true); setWorkspaceError('');
+    rpc.call('workspaces', { page: workspacePage }).then(data => {
+      if (!live) return;
+      setWorkspaces(previous => workspacePage === 1 ? data.workspaces : [...previous, ...data.workspaces.filter(w => !previous.some(p => p.slug === w.slug))]);
+      setMoreWorkspaces(data.hasNext);
+      if (workspacePage === 1) setDiscoveryWorkspace(previous => previous || config.workspace || data.workspaces[0]?.slug || '');
+    }, e => { if (live) setWorkspaceError(`Workspace discovery unavailable. Check workspace read permission, or enter a workspace below. ${e instanceof Error ? e.message : ''}`); }).finally(() => { if (live) setDiscoveringWorkspaces(false); });
+    return () => { live = false; };
+  }, [rpc, config, workspacePage, discoveryRetry]);
+  useEffect(() => {
+    if (!config?.configured || !discoveryWorkspace) return;
+    let live = true; setDiscoveringRepos(true); setRepoError('');
+    rpc.call('repositories', { workspace: discoveryWorkspace, page: repoPage }).then(data => {
+      if (!live) return;
+      setRepositories(previous => repoPage === 1 ? data.repositories : [...previous, ...data.repositories.filter(r => !previous.some(p => p.slug === r.slug))]);
+      setMoreRepos(data.hasNext);
+    }, e => { if (live) setRepoError(`Repository discovery unavailable. Check repository read permission, or enter the repository below. ${e instanceof Error ? e.message : ''}`); }).finally(() => { if (live) setDiscoveringRepos(false); });
+    return () => { live = false; };
+  }, [rpc, config, discoveryWorkspace, repoPage, discoveryRetry]);
+  const chooseWorkspace = (value: string) => { setDiscoveryWorkspace(value); setWorkspace(value); setRepo(''); setRepositories([]); setRepoPage(1); setMoreRepos(false); };
+  const chooseRepository = (slug: string) => {
+    const choice = repositories.find(r => r.slug === slug); if (!choice) return;
+    generation.current++; setRuns(null); setSelected(null); setUpdated(''); setPage(1); setVariables([]);
+    setWorkspace(choice.workspace); setRepo(choice.slug); setRef(choice.branch || 'main'); setActive({ workspace: choice.workspace, repo: choice.slug });
+  };
   const refresh = useCallback(async () => {
     if (!active) return;
     const version = ++generation.current;
@@ -49,6 +84,14 @@ function Dashboard() {
   return <div className="h-full overflow-y-auto bg-background text-foreground"><div className="mx-auto max-w-6xl space-y-6 p-4 md:p-8">
     <header className="flex flex-wrap items-start justify-between gap-4"><div><p className="mb-2 text-xs font-medium uppercase tracking-widest text-muted-foreground">Bitbucket Cloud</p><h1 className="text-2xl font-semibold tracking-tight">Pipeline control room</h1><p className="mt-2 text-sm text-muted-foreground">Launch builds. Follow deployments. Keep work moving.</p></div><Button variant="outline" onClick={() => void refresh()} disabled={!active || loading}><Icon name="RefreshCw" className="size-4" />{loading ? 'Refreshing…' : 'Refresh'}</Button></header>
     {config && !config.configured && <div className="rounded-xl border border-border bg-card p-5"><h2 className="font-medium">Connect Bitbucket</h2><p className="mt-2 text-sm text-muted-foreground">Open Settings → Installed plugins → Bitbucket Pipelines. Set your authentication mode and secret token. API tokens also require your Atlassian account email. Reopen this dashboard after saving.</p></div>}
+    {config?.configured && <section className="space-y-4 rounded-xl border border-border bg-card p-4">
+      <div className="flex items-center justify-between gap-3"><h2 className="text-sm font-semibold">Choose a repository</h2><Button type="button" variant="ghost" size="sm" onClick={() => { setWorkspacePage(1); setRepoPage(1); setDiscoveryRetry(n => n + 1); }}>Reload choices</Button></div>
+      <div className="grid gap-3 sm:grid-cols-2"><label className="space-y-2 text-xs font-medium">Available workspaces<select aria-label="Available workspaces" className={selectClass} value={discoveryWorkspace} disabled={discoveringWorkspaces} onChange={e => chooseWorkspace(e.target.value)}><option value="">{discoveringWorkspaces ? 'Loading workspaces…' : 'Choose workspace'}</option>{discoveryWorkspace && !workspaces.some(w => w.slug === discoveryWorkspace) && <option value={discoveryWorkspace}>{discoveryWorkspace}</option>}{workspaces.map(w => <option key={w.slug} value={w.slug}>{w.name}</option>)}</select></label>
+      <label className="space-y-2 text-xs font-medium">Available repositories<select aria-label="Available repositories" className={selectClass} value={active?.workspace === discoveryWorkspace ? active.repo : ''} disabled={discoveringRepos || !discoveryWorkspace} onChange={e => chooseRepository(e.target.value)}><option value="">{discoveringRepos ? 'Loading repositories…' : repositories.length ? 'Choose repository' : 'No repositories loaded'}</option>{active?.workspace === discoveryWorkspace && !repositories.some(r => r.slug === active.repo) && <option value={active.repo}>{active.repo}</option>}{repositories.map(r => <option key={r.slug} value={r.slug}>{r.name}</option>)}</select></label></div>
+      <div className="flex flex-wrap gap-2">{moreWorkspaces && <Button variant="outline" size="sm" disabled={discoveringWorkspaces} onClick={() => setWorkspacePage(n => n + 1)}>More workspaces</Button>}{moreRepos && <Button variant="outline" size="sm" disabled={discoveringRepos} onClick={() => setRepoPage(n => n + 1)}>More repositories</Button>}</div>
+      {(workspaceError || repoError) && <p role="status" className="text-xs text-muted-foreground">{workspaceError} {repoError}</p>}
+      <details><summary className="cursor-pointer text-xs text-muted-foreground">Enter workspace manually</summary><form className="mt-3 flex gap-2" onSubmit={e => { e.preventDefault(); chooseWorkspace(workspace.trim()); }}><Input aria-label="Workspace for discovery" required value={workspace} onChange={e => setWorkspace(e.target.value)} placeholder="Workspace slug" /><Button type="submit" variant="outline">Find repositories</Button></form></details>
+    </section>}
     <form className="flex flex-wrap items-end gap-3 rounded-xl border border-border bg-card p-4" onSubmit={e => { e.preventDefault(); setRuns(null); setSelected(null); setPage(1); setActive({ workspace: workspace.trim(), repo: repo.trim() }); }}>
       <label className="min-w-40 flex-1 space-y-2 text-xs font-medium">Workspace<Input required value={workspace} onChange={e => setWorkspace(e.target.value)} placeholder="your-workspace" /></label>
       <label className="min-w-40 flex-1 space-y-2 text-xs font-medium">Repository<Input required value={repo} onChange={e => setRepo(e.target.value)} placeholder="repository-slug" /></label>

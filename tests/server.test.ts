@@ -38,3 +38,39 @@ test('uses only public SDK imports', async () => {
   const scan = await experimental_scanPublicSdkOnly(new URL('..', import.meta.url).pathname, { allow: [/^react(?:-dom)?$/, /^@radix-ui\//, /^class-variance-authority$/, /^clsx$/, /^tailwind-merge$/] });
   assert.deepEqual(scan.violations, []); assert.deepEqual(scan.privateDependencies, []);
 });
+
+test('discovery works without repository defaults and keeps pagination on the fixed API origin', async () => {
+  const { bb, harness } = createFakePluginHost({ pluginId: 'bitbucket-pipelines', settings: { authMode: 'bearer', token: 'secret' } });
+  const original = globalThis.fetch;
+  const urls: string[] = [];
+  globalThis.fetch = (async url => {
+    const path = String(url); urls.push(path);
+    if (path.includes('user/workspaces')) return Response.json({ values: [{ workspace: { slug: 'team' } }], next: 'https://attacker.invalid/steal' });
+    return Response.json({ values: [{ slug: 'app', name: 'Application', mainbranch: { name: 'develop' }, extra: 'not-exposed' }] });
+  }) as typeof fetch;
+  try {
+    await plugin(bb);
+    assert.deepEqual(await harness.behavior.callRpc('workspaces', {}), { workspaces: [{ slug: 'team', name: 'team' }], hasNext: true, page: 1 });
+    assert.deepEqual(await harness.behavior.callRpc('repositories', { workspace: 'team', page: 2 }), { repositories: [{ workspace: 'team', slug: 'app', name: 'Application', branch: 'develop' }], hasNext: false, page: 2 });
+    assert.equal(urls[0], 'https://api.bitbucket.org/2.0/user/workspaces?pagelen=50&page=1');
+    assert.equal(urls[1], 'https://api.bitbucket.org/2.0/repositories/team?pagelen=50&sort=name&page=2');
+    const cli = await harness.behavior.runCli(['repositories', '--workspace', 'team', '--json']);
+    assert.equal(cli.exitCode, 0, cli.stderr);
+    assert.ok(cli.stdout?.includes('develop'));
+    const before = urls.length;
+    await assert.rejects(harness.behavior.callRpc('repositories', { workspace: '..' }));
+    assert.equal(urls.length, before);
+    await harness.behavior.callAgentTool('bitbucket_pipelines_workspaces', {});
+  } finally { globalThis.fetch = original; await harness.lifecycle.dispose(); }
+});
+
+test('discovery permission failure does not expose API error bodies or prevent manual pipeline use', async () => {
+  const { bb, harness } = createFakePluginHost({ pluginId: 'bitbucket-pipelines', settings: { authMode: 'bearer', token: 'secret', workspace: 'team', repo: 'app' } });
+  const original = globalThis.fetch;
+  globalThis.fetch = (async url => String(url).includes('user/workspaces') ? new Response('private-token', { status: 403 }) : Response.json({ values: [] })) as typeof fetch;
+  try {
+    await plugin(bb);
+    await assert.rejects(harness.behavior.callRpc('workspaces', {}), e => e instanceof Error && e.message.includes('403') && !e.message.includes('private-token'));
+    assert.deepEqual(await harness.behavior.callRpc('list', {}), { pipelines: [], hasNext: false, page: 1 });
+  } finally { globalThis.fetch = original; await harness.lifecycle.dispose(); }
+});
