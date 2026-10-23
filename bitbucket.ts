@@ -1,12 +1,8 @@
 import { z } from 'zod';
-import { pipelineSchema, stepSchema, runInput, type Pipeline, workspaceSchema, repositorySchema } from './contract';
-export type Credentials = { authMode: string; email: string; token?: string };
+import { pipelineSchema, stepSchema, runInput, type Pipeline } from './contract';
+export type Credentials = { token?: string };
 export function authorization(c: Credentials): string {
-  if (!c.token?.trim()) throw new Error('Add a token in Settings → Installed plugins → Bitbucket Pipelines.');
-  if (c.authMode === 'api-token') {
-    if (!c.email.trim()) throw new Error('Set your Atlassian account email for API token authentication.');
-    return `Basic ${Buffer.from(`${c.email.trim()}:${c.token.trim()}`).toString('base64')}`;
-  }
+  if (!c.token?.trim()) throw new Error('Add a repository access token in Settings → Installed plugins → Bitbucket Pipelines.');
   return `Bearer ${c.token.trim()}`;
 }
 export function launchBody(input: z.infer<typeof runInput>) {
@@ -33,22 +29,11 @@ export function normalizeStep(raw: unknown) {
   const s = z.object({ uuid: z.string(), name: z.string().optional(), state, duration_in_seconds: z.number().nullish() }).parse(raw);
   return stepSchema.parse({ uuid: s.uuid, name: s.name ?? 'Step', state: s.state.name, result: s.state.result?.name ?? null, duration: s.duration_in_seconds ?? 0 });
 }
-export function normalizeWorkspace(raw: unknown) {
-  const w = z.object({ workspace: z.object({ slug: z.string(), name: z.string().optional() }) }).parse(raw).workspace;
-  return workspaceSchema.parse({ slug: w.slug, name: w.name ?? w.slug });
-}
-export function normalizeRepository(raw: unknown, workspace: string) {
-  const r = z.object({ slug: z.string(), name: z.string(), mainbranch: z.object({ name: z.string() }).nullish() }).parse(raw);
-  return repositorySchema.parse({ workspace, slug: r.slug, name: r.name, branch: r.mainbranch?.name ?? '' });
-}
-export function request(credentials: Credentials, path: string, method = 'GET', body?: unknown, signal?: AbortSignal) {
-  return requestApi(credentials, `repositories/${path}`, method, body, signal);
-}
-export async function requestApi(credentials: Credentials, path: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<unknown> {
+export async function request(credentials: Credentials, path: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<unknown> {
   const headers = { Authorization: authorization(credentials), Accept: 'application/json', 'Content-Type': 'application/json' };
   let response: Response;
   try {
-    response = await fetch(`https://api.bitbucket.org/2.0/${path}`, { method, headers, redirect: 'error',
+    response = await fetch(`https://api.bitbucket.org/2.0/repositories/${path}`, { method, headers, redirect: 'error',
       signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(20000)]) : AbortSignal.timeout(20000),
       ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   } catch {
@@ -56,7 +41,7 @@ export async function requestApi(credentials: Credentials, path: string, method 
   }
   if (!response.ok) {
     // Do not echo API error bodies: they can contain credentials or submitted secured variables.
-    const hint = response.status === 401 ? 'Check your token and authentication mode.' : response.status === 403 ? 'Check repository access and pipeline read/write permissions.' : response.status === 404 ? 'Check workspace, repository and pipeline ID.' : response.status === 429 ? `Rate limited. Retry after ${response.headers.get('retry-after')?.replace(/[^0-9]/g, '').slice(0, 6) || 'a few'} seconds.` : 'Check the reference, custom pipeline name and repository pipeline configuration.';
+    const hint = response.status === 401 ? 'Check that the repository access token is valid and has not expired.' : response.status === 403 ? 'Check repository access and pipeline read/write permissions.' : response.status === 404 ? 'Check workspace, repository and pipeline ID.' : response.status === 429 ? `Rate limited. Retry after ${response.headers.get('retry-after')?.replace(/[^0-9]/g, '').slice(0, 6) || 'a few'} seconds.` : 'Check the reference, custom pipeline name and repository pipeline configuration.';
     throw new Error(`Bitbucket HTTP ${response.status}. ${hint}`);
   }
   if (response.status === 204) return null;
